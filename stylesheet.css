@@ -1,0 +1,15 @@
+/* Basic stylesheet for the Whisper Transcriber extension */
+
+.error-text {
+    color: #ff5555;
+}
+
+/* Styling for the recording indicator */
+.recording-active {
+    color: #ff0000;
+}
+
+/* Styling for the processing indicator */
+.processing-active {
+    color: #3584e4;
+}

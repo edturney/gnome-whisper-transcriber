@@ -3,6 +3,7 @@
 const { Adw, Gtk, GObject } = imports.gi;
 const ExtensionUtils = imports.misc.extensionUtils;
 const Me = ExtensionUtils.getCurrentExtension();
+const _ = ExtensionUtils.gettext;
 
 const PrefsWidget = GObject.registerClass(
     class PrefsWidget extends Adw.PreferencesPage {
@@ -13,14 +14,14 @@ const PrefsWidget = GObject.registerClass(
             
             // Create API Key group
             const apiGroup = new Adw.PreferencesGroup({
-                title: 'OpenAI API Settings'
+                title: _('OpenAI API Settings')
             });
             this.add(apiGroup);
             
             // Create API Key row
             const apiKeyRow = new Adw.EntryRow({
-                title: 'API Key',
-                tooltip_text: 'Enter your OpenAI API key here'
+                title: _('API Key'),
+                tooltip_text: _('Enter your OpenAI API key here')
             });
             
             // Set current value
@@ -38,7 +39,7 @@ const PrefsWidget = GObject.registerClass(
             this.add(helpGroup);
             
             const helpLabel = new Gtk.Label({
-                label: 'Get your API key from <a href="https://platform.openai.com/account/api-keys">OpenAI</a>',
+                label: _('Get your API key from <a href="https://platform.openai.com/account/api-keys">OpenAI</a>'),
                 use_markup: true,
                 margin_top: 10
             });
@@ -53,7 +54,7 @@ const PrefsWidget = GObject.registerClass(
 );
 
 function init() {
-    // Nothing to do here
+    ExtensionUtils.initTranslations(Me.metadata.uuid);
 }
 
 function fillPreferencesWindow(window) {
