@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.whisper-transcriber" path="/org/gnome/shell/extensions/whisper-transcriber/">
+    <key name="whisper-api-key" type="s">
+      <default>''</default>
+      <summary>OpenAI API Key</summary>
+      <description>API key for accessing OpenAI Whisper transcription service</description>
+    </key>
+  </schema>
+</schemalist>
