@@ -18,6 +18,11 @@ required_files=(
   "PRIVACY.md"
   "README.md"
   "stylesheet.css"
+  "po/POTFILES.in"
+  "po/LINGUAS"
+  "po/whisper-transcriber.pot"
+  "schemas/org.gnome.shell.extensions.whisper-transcriber.gschema.xml"
+  "schemas/gschemas.compiled"
 )
 
 for file in "${required_files[@]}"; do
@@ -27,15 +32,10 @@ for file in "${required_files[@]}"; do
   fi
 done
 
-# Check if schemas directory exists and is compiled
-if [ ! -d "${SCRIPT_DIR}/schemas" ]; then
-  echo "Error: schemas directory not found!"
-  exit 1
-fi
-
+# Ensure schemas are compiled
 if [ ! -f "${SCRIPT_DIR}/schemas/gschemas.compiled" ]; then
   echo "Compiling schemas..."
-  cd "${SCRIPT_DIR}/schemas" && glib-compile-schemas .
+  glib-compile-schemas "${SCRIPT_DIR}/schemas/"
   if [ $? -ne 0 ]; then
     echo "Error: Failed to compile schemas!"
     exit 1
@@ -49,6 +49,17 @@ if [ ! -d "${SCRIPT_DIR}/po" ]; then
   echo "extension.js" > "${SCRIPT_DIR}/po/POTFILES.in"
   echo "prefs.js" >> "${SCRIPT_DIR}/po/POTFILES.in"
   touch "${SCRIPT_DIR}/po/LINGUAS"
+fi
+
+# Ensure .pot file exists
+if [ ! -f "${SCRIPT_DIR}/po/whisper-transcriber.pot" ]; then
+  echo "Generating .pot file..."
+  xgettext --from-code=UTF-8 --language=JavaScript -o "${SCRIPT_DIR}/po/whisper-transcriber.pot" \
+    "${SCRIPT_DIR}/extension.js" "${SCRIPT_DIR}/prefs.js"
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to generate whisper-transcriber.pot!"
+    exit 1
+  fi
 fi
 
 # Create build directory
@@ -67,12 +78,10 @@ rm -f "${BUILD_DIR}/.gitignore"
 rm -f "${BUILD_DIR}/package.sh"
 rm -f "${BUILD_DIR}/${EXT_UUID}.zip"
 
-# Create the ZIP file
+# Create the ZIP file (without nesting the directory inside)
 echo "Creating ZIP package..."
-cd "${BUILD_DIR}/.." && zip -r "${EXT_UUID}.zip" "$(basename "${BUILD_DIR}")"
-
-# Move the ZIP file to the script directory
-mv "/tmp/${EXT_UUID}.zip" "${SCRIPT_DIR}/${EXT_UUID}.zip"
+cd "${BUILD_DIR}" && zip -r "${SCRIPT_DIR}/${EXT_UUID}.zip" .
 
 echo "Package created: ${SCRIPT_DIR}/${EXT_UUID}.zip"
 echo "You can now upload this file to extensions.gnome.org"
+
