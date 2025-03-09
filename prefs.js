@@ -1,9 +1,8 @@
-'use strict';
+import Adw from 'gi://Adw';
+import Gtk from 'gi://Gtk';
+import GObject from 'gi://GObject';
 
-const { Adw, Gtk, GObject } = imports.gi;
-const ExtensionUtils = imports.misc.extensionUtils;
-const Me = ExtensionUtils.getCurrentExtension();
-const _ = ExtensionUtils.gettext;
+import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 const PrefsWidget = GObject.registerClass(
     class PrefsWidget extends Adw.PreferencesPage {
@@ -53,13 +52,11 @@ const PrefsWidget = GObject.registerClass(
     }
 );
 
-function init() {
-    ExtensionUtils.initTranslations(Me.metadata.uuid);
-}
-
-function fillPreferencesWindow(window) {
-    const settings = ExtensionUtils.getSettings('org.gnome.shell.extensions.whisper-transcriber');
-    
-    const page = new PrefsWidget(settings);
-    window.add(page);
+export default class WhisperTranscriberPrefs extends ExtensionPreferences {
+    fillPreferencesWindow(window) {
+        const settings = this.getSettings();
+        
+        const page = new PrefsWidget(settings);
+        window.add(page);
+    }
 }

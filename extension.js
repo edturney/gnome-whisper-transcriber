@@ -1,16 +1,17 @@
 // GNOME Extension: Whisper Transcriber
 // Description: Records audio, transcribes it using OpenAI Whisper API, and copies to clipboard
 
-const { St, GObject, GLib, Gio, Clutter } = imports.gi;
-const Main = imports.ui.main;
-const PanelMenu = imports.ui.panelMenu;
-const PopupMenu = imports.ui.popupMenu;
-const ByteArray = imports.byteArray;
-const Clipboard = St.Clipboard.get_default();
-const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
-const ExtensionUtils = imports.misc.extensionUtils;
-const Me = ExtensionUtils.getCurrentExtension();
-const _ = ExtensionUtils.gettext;
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import GObject from 'gi://GObject';
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+
+import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 // Extension state
 let indicator = null;
@@ -21,14 +22,18 @@ let settings = null;
 
 // API key settings key
 const API_KEY_SETTING = 'whisper-api-key';
+const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 
 /**
  * Check if required dependencies are installed
  * @returns {boolean} True if all dependencies are available
  */
 function _checkDependencies() {
-    let [, , , ffmpegStatus] = GLib.spawn_command_line_sync('which ffmpeg');
-    let [, , , curlStatus] = GLib.spawn_command_line_sync('which curl');
+    let ffmpegCheck = GLib.spawn_command_line_sync('which ffmpeg');
+    let curlCheck = GLib.spawn_command_line_sync('which curl');
+    
+    let ffmpegStatus = ffmpegCheck[3];
+    let curlStatus = curlCheck[3];
     
     let missingDeps = [];
     
@@ -66,10 +71,11 @@ function _checkDependencies() {
 
 const WhisperTranscriberIndicator = GObject.registerClass(
     class WhisperTranscriberIndicator extends PanelMenu.Button {
-        _init(depsAvailable = true) {
+        _init(depsAvailable) {
             super._init(0.0, _('Whisper Transcriber'));
             
             this._depsAvailable = depsAvailable;
+            this._checkCount = 0;
             
             // Create the panel icon
             this.icon = new St.Icon({
@@ -120,7 +126,14 @@ const WhisperTranscriberIndicator = GObject.registerClass(
         }
         
         _openSettings() {
-            ExtensionUtils.openPrefs();
+            // Launch preferences
+            if (this._extension) {
+                this._extension.openPreferences();
+            }
+        }
+        
+        setExtension(extension) {
+            this._extension = extension;
         }
         
         _startRecording() {
@@ -152,19 +165,27 @@ const WhisperTranscriberIndicator = GObject.registerClass(
                     '-c:a', 'libvorbis',
                     '-y',  // Overwrite output file if it exists
                     recordingPath     // Output file
-                ];
+                ];                
                 
                 // Spawn the process with a unique identifier for easier killing
                 this._logDebug(_('Recording...'));
-                const [success, pid] = GLib.spawn_async(
+                
+                let spawnResult = GLib.spawn_async(
                     null,           // Working directory (null = default)
                     ffmpegArgs,     // Arguments
                     null,           // Environment variables (null = inherit)
                     GLib.SpawnFlags.SEARCH_PATH,  // Use PATH to find executable
                     null            // Child setup function
                 );
+
+                let success = spawnResult[0];
+                let pid = spawnResult[1];
                 
-                recordingProcess = pid;
+                if (success) {
+                    recordingProcess = pid;
+                } else {
+                    throw new Error("Failed to start recording process");
+                }
             } catch (e) {
                 this._notify(_('Error starting recording: %s').format(e.message));
                 this._resetUI();
@@ -193,12 +214,8 @@ const WhisperTranscriberIndicator = GObject.registerClass(
             } catch (e) {
                 this._notify(_('Error stopping recording: %s').format(e.message));
             }
-            
-            // Reset UI
-            this._resetUI();
-            
-            // Process the audio
-            this._processAudio(recordingPath);
+
+            this._waitForFileCompletion(recordingPath, 0);
         }
         
         _resetUI() {
@@ -213,7 +230,7 @@ const WhisperTranscriberIndicator = GObject.registerClass(
             this.icon.icon_name = 'emblem-synchronizing-symbolic';
             this.icon.style_class = 'system-status-icon processing-active';
             this.recordItem.reactive = false;
-            
+
             this._logDebug(_('Transcribing...'));
             
             // Get API key from settings
@@ -242,7 +259,7 @@ const WhisperTranscriberIndicator = GObject.registerClass(
                 this._logDebug(_('Running command: %s').format(command.replace(apiKey, 'API_KEY_HIDDEN')));
                 
                 // Run the command asynchronously
-                const [success, pid] = GLib.spawn_async(
+                let spawnResult = GLib.spawn_async(
                     null,                         // Working directory
                     ['bash', '-c', command],      // Command
                     null,                         // Environment
@@ -250,11 +267,14 @@ const WhisperTranscriberIndicator = GObject.registerClass(
                     null                          // Child setup function
                 );
                 
+                let success = spawnResult[0];
+                
                 if (!success) {
                     throw new Error(_('Failed to launch transcription process'));
                 }
                 
                 // Set up a timeout to check for the output file
+                this._checkCount = 0;  // Reset counter
                 this._checkTranscriptionResult(outputPath, filePath);
                 
             } catch (e) {
@@ -279,7 +299,7 @@ const WhisperTranscriberIndicator = GObject.registerClass(
         
         // Add debug logging method
         _logDebug(message) {
-            log('[Whisper Transcriber] ' + message);
+            console.log('[Whisper Transcriber] ' + message);
         }
         
         // Check for transcription results
@@ -290,15 +310,18 @@ const WhisperTranscriberIndicator = GObject.registerClass(
                     // Check if file exists
                     if (GLib.file_test(outputPath, GLib.FileTest.EXISTS)) {
                         // Read the output file
-                        let [success, contents] = GLib.file_get_contents(outputPath);
+                        let fileContents = GLib.file_get_contents(outputPath);
+                        let success = fileContents[0];
+                        let contents = fileContents[1];
                         
                         if (success && contents && contents.length > 0) {
                             // Convert contents to string
-                            const transcription = ByteArray.toString(contents).trim();
+                            const decoder = new TextDecoder('utf-8');
+                            const transcription = decoder.decode(contents).trim();
                             
                             if (transcription.length > 0) {
                                 // Copy to clipboard
-                                Clipboard.set_text(CLIPBOARD_TYPE, transcription);
+                                St.Clipboard.get_default().set_text(CLIPBOARD_TYPE, transcription);
                                 
                                 // Notify user
                                 const truncated = transcription.length > 50 
@@ -328,7 +351,7 @@ const WhisperTranscriberIndicator = GObject.registerClass(
                     
                     // If we reach here, either the file doesn't exist yet or it's empty
                     // Continue checking until timeout (20 seconds max)
-                    this._checkCount = (this._checkCount || 0) + 1;
+                    this._checkCount++;
                     
                     if (this._checkCount > 40) { // 40 * 500ms = 20 seconds
                         this._notify(_('Transcription timed out'));
@@ -360,9 +383,13 @@ const WhisperTranscriberIndicator = GObject.registerClass(
         _checkErrorFile() {
             try {
                 if (GLib.file_test('/tmp/whisper_error.txt', GLib.FileTest.EXISTS)) {
-                    let [success, contents] = GLib.file_get_contents('/tmp/whisper_error.txt');
+                    let fileContents = GLib.file_get_contents('/tmp/whisper_error.txt');
+                    let success = fileContents[0];
+                    let contents = fileContents[1];
+                    
                     if (success && contents && contents.length > 0) {
-                        const errorMsg = ByteArray.toString(contents).trim();
+                        const decoder = new TextDecoder('utf-8');
+                        const errorMsg = decoder.decode(contents).trim();
                         this._notify(_('Error details: %s').format(errorMsg.substring(0, 100)));
                         this._logDebug(_('Full error: %s').format(errorMsg));
                     }
@@ -371,43 +398,89 @@ const WhisperTranscriberIndicator = GObject.registerClass(
                 // Ignore errors reading the error file
             }
         }
+        _waitForFileCompletion(filePath, attempts) {
+            const MAX_ATTEMPTS = 20; // Maximum number of attempts (10 seconds total)
+            
+            if (attempts >= MAX_ATTEMPTS) {
+                this._logDebug('Timeout waiting for file to be finalized');
+                this._resetUI();
+                this._processAudio(filePath); // Try processing anyway
+                return;
+            }
+            
+            // Check if file exists and has size
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+                try {
+                    if (GLib.file_test(filePath, GLib.FileTest.EXISTS)) {
+                        // Get file info to check size
+                        const file = Gio.File.new_for_path(filePath);
+                        const info = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null);
+                        const fileSize = info.get_size();
+                        
+                        this._logDebug(`File size: ${fileSize} bytes`);
+                        
+                        if (fileSize > 0) {
+                            // File exists and has content
+                            this._logDebug('File finalized successfully');
+                            this._resetUI();
+                            this._processAudio(filePath);
+                            return GLib.SOURCE_REMOVE;
+                        }
+                    }
+                    
+                    // File doesn't exist or has no content yet, try again
+                    this._logDebug(`Waiting for file to be finalized, attempt ${attempts + 1}/${MAX_ATTEMPTS}`);
+                    this._waitForFileCompletion(filePath, attempts + 1);
+                    
+                } catch (e) {
+                    this._logDebug(`Error checking file: ${e.message}`);
+                    // Continue waiting despite error
+                    this._waitForFileCompletion(filePath, attempts + 1);
+                }
+                
+                return GLib.SOURCE_REMOVE;
+            });
+        }
     }
 );
 
-function init() {
-    ExtensionUtils.initTranslations(Me.metadata.uuid);
-}
+export default class WhisperTranscriberExtension extends Extension {
+    enable() {
+        console.log('Enabling Whisper Transcriber extension');
+        
+        // Load settings
+        settings = this.getSettings();
+        
+        // Check dependencies
+        const depsAvailable = _checkDependencies();
+        
+        // Create the indicator
+        indicator = new WhisperTranscriberIndicator(depsAvailable);
+        indicator.setExtension(this);
+        
+        // Add the indicator to the panel
+        Main.panel.addToStatusArea('whisper-transcriber', indicator);
+    }
 
-function enable() {
-    // Load settings
-    settings = ExtensionUtils.getSettings('org.gnome.shell.extensions.whisper-transcriber');
-    
-    // Check dependencies
-    const depsAvailable = _checkDependencies();
-    
-    // Create the indicator
-    indicator = new WhisperTranscriberIndicator(depsAvailable);
-    
-    // Add the indicator to the panel
-    Main.panel.addToStatusArea('whisper-transcriber', indicator);
-}
-
-function disable() {
-    // Stop any ongoing recording
-    if (isRecording) {
-        try {
-            GLib.spawn_sync(null, ['pkill', 'ffmpeg'], null, GLib.SpawnFlags.SEARCH_PATH, null);
-        } catch (e) {
-            // Ignore errors during cleanup
+    disable() {
+        console.log('Disabling Whisper Transcriber extension');
+        
+        // Stop any ongoing recording
+        if (isRecording) {
+            try {
+                GLib.spawn_sync(null, ['pkill', 'ffmpeg'], null, GLib.SpawnFlags.SEARCH_PATH, null);
+            } catch (e) {
+                // Ignore errors during cleanup
+            }
         }
+        
+        // Remove the indicator from the panel
+        if (indicator) {
+            indicator.destroy();
+            indicator = null;
+        }
+        
+        // Clean up settings
+        settings = null;
     }
-    
-    // Remove the indicator from the panel
-    if (indicator) {
-        indicator.destroy();
-        indicator = null;
-    }
-    
-    // Clean up settings
-    settings = null;
 }
