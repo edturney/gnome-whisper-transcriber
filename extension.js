@@ -24,51 +24,6 @@ let settings = null;
 const API_KEY_SETTING = 'whisper-api-key';
 const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 
-/**
- * Check if required dependencies are installed
- * @returns {boolean} True if all dependencies are available
- */
-function _checkDependencies() {
-    let ffmpegCheck = GLib.spawn_command_line_sync('which ffmpeg');
-    let curlCheck = GLib.spawn_command_line_sync('which curl');
-    
-    let ffmpegStatus = ffmpegCheck[3];
-    let curlStatus = curlCheck[3];
-    
-    let missingDeps = [];
-    
-    if (ffmpegStatus !== 0) {
-        missingDeps.push('ffmpeg');
-    }
-    
-    if (curlStatus !== 0) {
-        missingDeps.push('curl');
-    }
-    
-    if (missingDeps.length > 0) {
-        Main.notifyError(
-            _('Whisper Transcriber Error'), 
-            _('Missing required dependencies: %s').format(missingDeps.join(', '))
-        );
-        return false;
-    }
-    
-    // Check /tmp directory write permissions
-    try {
-        let tempFile = '/tmp/whisper_transcriber_test_' + Math.floor(Date.now() / 1000);
-        GLib.file_set_contents(tempFile, 'test');
-        GLib.unlink(tempFile);
-    } catch (e) {
-        Main.notifyError(
-            _('Whisper Transcriber Error'), 
-            _('Cannot write to /tmp directory. Check permissions.')
-        );
-        return false;
-    }
-    
-    return true;
-}
-
 const WhisperTranscriberIndicator = GObject.registerClass(
     class WhisperTranscriberIndicator extends PanelMenu.Button {
         _init(depsAvailable) {
@@ -450,10 +405,7 @@ export default class WhisperTranscriberExtension extends Extension {
         
         // Load settings
         settings = this.getSettings();
-        
-        // Check dependencies
-        const depsAvailable = _checkDependencies();
-        
+               
         // Create the indicator
         indicator = new WhisperTranscriberIndicator(depsAvailable);
         indicator.setExtension(this);
